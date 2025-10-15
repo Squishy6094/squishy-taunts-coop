@@ -16,9 +16,9 @@ local function convert_s16(num)
     return num
 end
 
-local function get_taunt_number_from_action(m, action)
+local function get_taunt_number_from_action(m)
     for i = 1, #tauntTable do
-        if tauntTable[i].action == action then
+        if tauntTable[i].action == m.action then
             return i
         end
     end
@@ -57,10 +57,10 @@ local function moving_taunt_update(m)
     end
 end
 
----@param anim integer|string
----@param loop boolean
----@param actionFunc boolean|function
-local function add_taunt(name, anim, loop, actionFunc)
+---@param anim integer|string Either Vanilla or Custom Anim input
+---@param loop boolean If the Animation should Loop or only play once
+---@param actionFunc boolean|function the Action Update function, True will use generic moving, False will use generic Still
+local function add_taunt(name, anim, loop, actionFunc, groupTauntLocal, groupTauntRemote)
     local actionID = allocate_mario_action(ACT_GROUP_CUTSCENE | ACT_FLAG_MOVING)
     table.insert(tauntTable, {
         name = name,
@@ -68,11 +68,14 @@ local function add_taunt(name, anim, loop, actionFunc)
         anim = anim,
         actFunc = actionFunc,
         loop = loop,
+        groupTauntLocal = groupTauntLocal,
+        groupTauntRemote = groupTauntRemote,
     })
     local tauntID = #tauntTable
 
+    ---@param m MarioState
     local function act_taunt(m)
-        local tauntData = tauntTable[get_taunt_number_from_action(m, m.action)]
+        local tauntData = tauntTable[get_taunt_number_from_action(m)]
         if m.actionState == 0 then
             m.marioObj.header.gfx.animInfo.animID = -1
             if type(anim) == "string" then
@@ -81,7 +84,6 @@ local function add_taunt(name, anim, loop, actionFunc)
             elseif type(anim) == "number" then
                 set_mario_animation(m, anim)
             end
-            djui_chat_message_create("loop")
             m.actionState = 1
         end
 
@@ -111,11 +113,34 @@ local function set_mario_taunt(m, tauntNum)
 end
 
 local TAUNT_STAR = add_taunt("Star Dance", CHAR_ANIM_STAR_DANCE, false, false)
-local TAUNT_A_POSE = add_taunt("Star Dance", CHAR_ANIM_A_POSE, true, false)
+local TAUNT_WAITING = add_taunt("Waiting for You", CHAR_ANIM_STAND_AGAINST_WALL, true, false, TAUNT_STAR, TAUNT_STAR)
+local TAUNT_A_POSE = add_taunt("TEST", CHAR_ANIM_A_POSE, true, false)
 local TAUNT_COMPANY = add_taunt("Company", EMOTE_ANIM_COMPANY_JIG, true, false)
+local TAUNT_BREAKDANCE = add_taunt("Breakdance", CHAR_ANIM_BREAKDANCE, true, true, nil, #tauntTable + 1)
 
 local function mario_update(m)
     if m.action & ACT_FLAG_AIR == 0 then
+        if m.controller.buttonDown & L_TRIG ~= 0 then
+            local nearest = nearest_mario_state_to_object(m.marioObj)
+            local tauntNum = get_taunt_number_from_action(nearest)
+            --if not nearest or not tauntData then return end
+            if nearest and tauntNum then
+                local tauntData = tauntTable[get_taunt_number_from_action(nearest)]
+                local yDif = math.abs(m.pos.y - nearest.pos.y)
+                local dist = vec3f_dist(m.pos, nearest.pos)
+                if yDif < 100 and dist < 1000 and tauntData.groupTauntRemote ~= nil then
+                    if tauntData.groupTauntLocal ~= nil then
+                        set_mario_taunt(nearest, tauntData.groupTauntLocal)
+                        m.pos.x = nearest.pos.x + sins(nearest.faceAngle.y)*250
+                        m.pos.z = nearest.pos.z + coss(nearest.faceAngle.y)*250
+                        m.faceAngle.y = nearest.faceAngle.y+0x8000
+                    else
+                        m.marioObj.header.gfx.animInfo.animFrame = nearest.marioObj.header.gfx.animInfo.animFrame
+                    end
+                    set_mario_taunt(m, tauntData.groupTauntRemote)
+                end
+            end
+        end
         if m.controller.buttonPressed & U_JPAD ~= 0 then
             set_mario_taunt(m, TAUNT_STAR)
         end
@@ -124,6 +149,9 @@ local function mario_update(m)
         end
         if m.controller.buttonPressed & D_JPAD ~= 0 then
             set_mario_taunt(m, TAUNT_COMPANY)
+        end
+        if m.controller.buttonPressed & R_JPAD ~= 0 then
+            set_mario_taunt(m, TAUNT_BREAKDANCE)
         end
     end
 end
